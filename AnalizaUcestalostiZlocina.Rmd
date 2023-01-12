@@ -1,0 +1,1125 @@
+---
+title: "SAP - Projektni zadatak, grupa Sapsapsaptastično SAP!"
+subtitle: "Analiza kriminala i socioekonomskih faktora"
+author: "Leon Novački, Iva Pezo, Lucija Vozab, Dorian Smoljan"
+date: "7.12.2020."
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+pool_size = 6250000
+knitr::opts_chunk$set
+```
+
+## Opis zadatka
+
+Osim što kriminal i kriminalna djela kao društvo želimo adekvatno kazniti, želimo ići i korak dalje te ispitati kako ih možemo prevenirati. Koji su motivi, pokretači kriminala i kriminalnih djela teško je i kompleksno pitanje.
+
+Cilj ovog projektnog zadatka je bolje razumijeti te istražiti same pojave kriminala te ispitati u kakvoj su oni vezi sa socio-ekonomskim uvjetima područja u kojem nastaju.
+
+## Učitavanje podataka - prosjek po četvrtima
+```{r}
+dataByBorough = read.csv("data/Chicago_poverty_and_crime.csv")
+dim(dataByBorough)
+head(dataByBorough)
+```
+
+## Učitavanje podataka - ukupni podaci svih zločina u proteklih godinu dana
+```{r}
+lastYearCrimes = read.csv("data/Crimes_-_One_year_prior_to_present.csv")
+dim(lastYearCrimes)
+head(lastYearCrimes)
+```
+```{r}
+# Dimenzije dataseta dataByBorough:
+names(dataByBorough)
+```
+Skup podatak dataByBorough sastoji se od 77 zapisa od kojih svaki označava
+određeni kvart garda Chicaga te je opisan 10 varijabli.
+
+```{r}
+# Dimenzije dataseta lastYearCrimes:
+names(lastYearCrimes) # imena stupaca
+```
+
+Skup podataka lastYearCrimes sastoji se od 216032 slučajeva opisanih pomoću 17 varijabli. Od 
+kojih će nas najviše interesirati vrijeme događaja te primarni opis zločina.
+
+
+Bavit ćemo se usporedbama različitih vrsta zločina s obzirom na različite faktore.
+Pogledajmo histogram frekvencija zločina različitih vrsta.
+
+
+```{r message = FALSE}
+library(dplyr)
+library(magrittr)
+library(ggplot2)
+library(knitr)
+
+lastYearCrimes$svizlociniCount <- 1
+sviZlociniPrimarniOpis <- aggregate(svizlociniCount ~ PRIMARY.DESCRIPTION, 
+                        data = lastYearCrimes, FUN=sum)
+
+
+lastYearCrimes %>% group_by(PRIMARY.DESCRIPTION) %>%summarise(count=sum(svizlociniCount)) %>%ggplot(aes(reorder(PRIMARY.DESCRIPTION, -count), count))+
+              geom_bar(stat = "identity") +
+              xlab("Primarni opis") + theme_minimal()+ theme(axis.title.x=element_blank()) + 
+  theme(axis.title.y=element_blank()) +
+  theme(axis.text.y = element_text(size= 9),
+        axis.text.x = element_text(size = 7, angle = 90, hjust=1)) 
+
+```
+Najzastupljeniji zločini su krađe te fizički napadi dok su ne kriminalne radnje, trgovina ljudima i javna nepristojnost najmanje prisutni.
+
+Frekvencija zločina nije jednaka u svakom dijelu grada. Poznato je da su određeni dijelovi grada sigurniji od drugih. Prikažimo to na karti.
+```{r  message=FALSE}
+#ucitavanje karte Chicaga
+library(ggmap)
+ chicago <- get_stamenmap(bbox = c(left = -88.0225, bottom = 41.5949, right = -87.2713, top = 42.0677), zoom = 12)
+ 
+ #karta grada
+ #ggmap(chicago)
+ 
+ LatLonCounts<-as.data.frame(table(round(lastYearCrimes$LONGITUDE,2), round(lastYearCrimes$LATITUDE,2)))
+ 
+ LatLonCounts$Long <- as.numeric(as.character(LatLonCounts$Var1))
+ LatLonCounts$Lat <- as.numeric(as.character(LatLonCounts$Var2))
+
+ #karta grada + intenzitet zločina na tom mjestu
+ ggmap(chicago) + geom_point(data = LatLonCounts, aes(x = Long, y = Lat, color = Freq, size = Freq)) + scale_color_gradient(low = "green", high = "red")
+```
+Iz prikaza možemo naslutiti da intenzitet zločina nije jednak u svim djelovima grada.
+
+## Case study: Učestalost zločina ovisno o dobu dana
+
+Jedno od pitanja kojima ćemo se baviti jest veza doba dana i učestalosti zločina.
+Podatke ćemo prikazati podijelom na 12 razdoblja po 2 sata sa prvim razdobljem 
+od ponoći.
+
+Nakon učitavanja podataka potrebno je pretvoriti odgovarajući stupac
+"DATE.OF.OCCURENCE" u odgovarajući tip podataka nakon čega su podatci spremni 
+za analizu.
+
+
+Prvi korak u analizi podataka jest uočavanje anomalija u podatcima. Zbog toga 
+ćemo prvo utvrditi ima li anomalija, te ako ima ukloniti ih.
+
+Ima li nepostojećih zapisa?
+```{r}
+anyNA(lastYearCrimes$DATE..OF.OCCURRENCE)
+anyNA(lastYearCrimes$PRIMARY.DESCRIPTION)
+```
+Nepostojećih zapisa nema.
+
+Ima li neunesenih zapisa?
+```{r}
+any(is.null(lastYearCrimes$DATE..OF.OCCURRENCE))
+any(is.null(lastYearCrimes$PRIMARY.DESCRIPTION))
+```
+Nepostojećih zapisa nema.
+
+Svi zapisi imaju unesene podatke o vremenu i datumu te primarnom opisu.
+Sada krećemo s pretvaranjem podataka u odgovarajući oblik.
+```{r}
+
+#pretvaramo datum u POSIXlt oblik za lakšu manipulaciju (POSIXlt je oblik u kojem su datumi "samo" zapisani)
+lastYearCrimes$DATE..OF.OCCURRENCE <- strptime(lastYearCrimes$DATE..OF.OCCURRENCE, format="%m/%d/%Y %I:%M:%S %p")
+
+#pretvaramo datum u POSIXct oblik -> u njemu su datumi interno zapisani kao sekunde nakon 1.1.1970, puno bolji za plottanje
+lastYearCrimes$TIMESTAMP <- strftime(lastYearCrimes$DATE..OF.OCCURRENCE, format="%m/%d/%Y %H:%M:%S %p", tz = "Etc/GMT-6", usetz = FALSE)
+
+```
+
+
+
+
+### Testiranje hipoteza
+
+Prvo pitanje koje nas zanima je razlikuje li se učestalost zločina ovisno o tome koje je doba dana. Kako bi lakše došli do zaključka, prikažimo prvo podatke grafički.
+
+Prikazujemo frekvencije zločina u periodima od jednog i dva sata u danu počeviši od ponoći.
+.
+```{r}
+
+breaksby2 <- seq(0,24, by=2)
+
+lastYearCrimes$TIME.INTERVAL <- cut(lastYearCrimes$DATE..OF.OCCURRENCE$hour,
+                                    breaks=breaksby2,
+                                    right=FALSE, include.lowest = TRUE)
+
+#frekvencijePoIntervalu <- cbind(table(lastYearCrimes$TIME.INTERVAL))
+#colnames(frekvencijePoIntervalu) <- c("Frekvencija zločina")
+
+breaksEveryHour <- seq(0,24, by=1)
+lastYearCrimes$TIME.EVERYHOUR <- cut(lastYearCrimes$DATE..OF.OCCURRENCE$hour,
+                                     breaks=breaksEveryHour, right=FALSE, 
+                                     include.lowest = TRUE)
+frekvencijePoSatu <- cbind(table(lastYearCrimes$TIME.EVERYHOUR))
+
+#colnames(frekvencijePoSatu) <- c("Frekvencija zločina")
+#frekvencijePoSatu
+
+```
+
+## Grafički prikaz
+
+Prikaz frekvencija po svakom satu prikazujemo pomoću histograma.
+
+```{r echo=FALSE}
+
+h = hist(lastYearCrimes$DATE..OF.OCCURRENCE$hour,
+         breaks=seq(0,24,by=1),
+         right=FALSE,
+         include.lowest = TRUE,
+         main= "Razdioba kriminalnih aktivnosti po satima",
+         xlab="Vrijeme",
+         ylab='Frekvencija',
+         axes=FALSE
+         )
+axis(side=1, at=seq(0,24, 2), labels=seq(0,24,2))
+axis(side=2, at=seq(0,15000, 3000), labels=seq(0,15000,3000))
+```
+Podijelom dana na periode od 2 sata počevši od ponoći dobiven je prikazani histogram. Pogledom na histogram, čini nam se da zaista postoji određena zavisnost kriminala i doba dana - vidimo veću frekvenciju sredinom i u drugoj polovici dana u odnosu na npr. razdoblje ranog jutra (2-6h). No, ovo je samo pretpostavka i moramo je provjeriti odgovarajućim testovima.
+
+Mjere centralne tendencije
+
+```{r}
+# Aritmetička sredina frekvencije zločina po satu
+mean(frekvencijePoSatu) 
+```
+
+```{r}
+# Podrezana aritmetička sredina s uklanjanjem po 10% najmanjih i najvećih podataka
+mean(frekvencijePoSatu, trim=0.1)
+
+```
+
+```{r message=FALSE}
+# 1., 2. i 3. kvartil
+quantile(frekvencijePoSatu, probs = c(0.25,0.5,0.75)) 
+```
+
+ Mjere rasipanja
+ 
+```{r}
+# Rang - razlika između najvećeg i najmanjeg iznosa u podatcima
+max(frekvencijePoSatu)-min(frekvencijePoSatu)
+
+```
+
+```{r}
+# Interkvartilni rang - razlika trećeg i prvog kvartila podataka
+IQR(frekvencijePoSatu)
+```
+
+```{r}
+# Varijanca i standardna devijacija
+var(frekvencijePoSatu)
+sd(frekvencijePoSatu)
+#sqrt(var(frekvencijePoSatu))
+#help(var)
+```
+
+```{r}
+# Koeficijent varijacije -  relativna mjera rasipanja koja opisuje rasipanje podataka u odnosu na njihovu aritmetičku sredinu.
+suppressWarnings(require(raster,quietly = TRUE))
+cv(frekvencijePoSatu)
+sd(frekvencijePoSatu)/mean(frekvencijePoSatu)
+```
+
+Mjere rasipanja u skladu su s očekivanim, nema prevelikih iznanađenja.
+
+Kako bi ustanovili postoji li zaista veća vjerojatnost pojave zločina u određeno doba dana, krećemo od osnovne provjere - ravnaju li se frekvencije zločina po uniformnoj distribuciji - jer ukoliko se ravnaju, to bi značilo da je jednaka vjerojatnost pojave zločina kroz cijeli dan.
+
+Za ovaj, a i za daljne testove dijelimo dan na 4 intervala po 6h: 2-8,8-14,14-20,20-02. Navedena razdoblja ugrubo odgovaraju jutru (2-8), prijepodnevu (8-14), poslijepodnevu(14-20), te večeri (20-02). Dodajemo novi stupac (PERIOD..OF.DAY) koji označava kojem u kojem od ta 4 dijela dana se zločin dogodio.
+
+```{r, messaging = FALSE}
+jutroDonja = 7200 #02:00:00
+jutroGornja = 28800 #08:00:00
+
+prijepodneDonja = 28800 #08:00:00
+prijepodneGornja = 50400 #14:00:00
+
+poslijepodneDonja = 50400
+poslijepodneGornja = 72000
+
+calculatePeriod <- function (timestamp){
+  secsAfterMidnight = timestamp$hour*3600 + timestamp$min*60 + timestamp$sec
+    if ((secsAfterMidnight >= jutroDonja) & (secsAfterMidnight < jutroGornja)){
+    return("jutro")
+  }else if ((secsAfterMidnight >= prijepodneDonja) & (secsAfterMidnight < prijepodneGornja)){
+    return("prijepodne")
+  } else if ((secsAfterMidnight >= poslijepodneDonja) & secsAfterMidnight < poslijepodneGornja){
+    return("poslijepodne")
+  } else{
+    return("vecer")
+  }
+}
+
+periods <- sapply(lastYearCrimes$DATE..OF.OCCURRENCE, calculatePeriod) #primjena funkcije na vektor
+
+lastYearCrimes$PERIOD..OF.DAY <- periods
+```
+
+### Testiranje uniformnost frekvencije zločina kroz dan
+
+Sada kada imamo odgovarajuće podatke, možemo preći na prvi test - test uniformnosti distribucije. Zanima nas slijede li vjerojatnosti pojave zločina uniformnu razdiobu u odnosu na ta 4 razdoblja. Ukoliko slijede, očekivali bi (ugrubo) jednak broj zločina u svakoj od 4 kategorije.
+
+H0 - frekvencija pojavljivanja zločina ima uniformnu distribuciju, odnosno jednaka je vjerojatnost pojave zločina u bilo koje doba dana
+
+H1 - u određena razdoblja u danu veća je vjerojatnost pojave zločina, odnosno distribucija nije uniformna.
+
+Koristimo hi-kvadrat test za ocjenjivanje priladodbe modela podacima.
+
+```{r}
+brojZločinaJutro = sum(lastYearCrimes$PERIOD..OF.DAY == "jutro")
+brojZločinaPrijepodne = sum(lastYearCrimes$PERIOD..OF.DAY == "prijepodne")
+brojZločinaPoslijepodne = sum(lastYearCrimes$PERIOD..OF.DAY == "poslijepodne")
+brojZločinaVečer = sum(lastYearCrimes$PERIOD..OF.DAY == "vecer")
+
+# brojZločinaJutro
+# brojZločinaPrijepodne
+# brojZločinaPoslijepodne
+# brojZlocinaVecer
+
+brojZlocinaJutro + brojZlocinaPrijepodne + brojZlocinaPoslijepodne + brojZlocinaVecer
+
+# lastYearCrimes$DATE..OF.OCCURRENCE[2] < jutroDonja
+# print(lastYearCrimes$DATE..OF.OCCURRENCE[2])
+
+
+obs <- c(brojZločinaJutro, brojZlocinaPrijepodne,brojZlocinaPoslijepodne,brojZlocinaVecer)
+exp <- c(.25, .25, .25, .25)
+chisq.test(obs, p=exp)
+
+```
+Kao što vidimo, p-vrijednost je jako malena, stoga možemo odbaciti nultu hipotezu, te zaključiti da frekvencija pojavljivanja zločina u danu nema uniformnu razdiobu, odnosno zaista postoji veća vjerojatnost pojavljivanja zločina u određeno doba dana, što je i u skladu s našim pretpostavkama.
+
+
+Sada kada znamo da je za neke dijelove dana vjerojatnost pojave zločina veća, zanima nas koje je to doba dana, odnosno u kojem dijelu dana se događa najveći broj zločina. U tu svrhu stvaramo novi dataset, sa 365 unosa - po jedan za svaki dan. Svaki unos sadrži broj zločina koji se dogodio ujutro, prijepodne, poslijepodne i navečer. Pogledajmo primjer tih podataka.
+
+##365 redaka, u svakom prosječan broj zločina za svaki tip zločina, te prosječan broj zločina koji se dogodio ujutro, prijepodne, poslijepodne i navečer
+
+```{r}
+#transformiramo stupac DATE OF OCCURENCE kako bi izvukli samo datum
+lastYearCrimes$DATE..OF.OCCURRENCE <- as.Date(lastYearCrimes$DATE..OF.OCCURRENCE)
+DATE <- unique(lastYearCrimes$DATE..OF.OCCURRENCE)
+crimesByDay <- data.frame(DATE)
+head(crimesByDay[order(crimesByDay$DATE),])
+dim(crimesByDay)
+
+
+for (i in 1:length(crimesByDay$DATE)){
+  datum <- crimesByDay$DATE[i]
+  crimesByDay$noOfCrimesMorning[i] <- sum((lastYearCrimes$PERIOD..OF.DAY == "jutro") & (lastYearCrimes$DATE..OF.OCCURRENCE == datum))
+  crimesByDay$noOfCrimesForenoon[i] <- sum((lastYearCrimes$PERIOD..OF.DAY == "prijepodne") & (lastYearCrimes$DATE..OF.OCCURRENCE == datum))
+  crimesByDay$noOfCrimesAfternoon[i] <- sum((lastYearCrimes$PERIOD..OF.DAY == "poslijepodne") & (lastYearCrimes$DATE..OF.OCCURRENCE == datum))
+  crimesByDay$noOfCrimesEvening[i] <- sum((lastYearCrimes$PERIOD..OF.DAY == "vecer") & (lastYearCrimes$DATE..OF.OCCURRENCE == datum))
+}
+
+head(crimesByDay)
+```
+
+Ovaj novi dataset nam otvara nove mogućnosti testiranja. Ukoliko ponovno pogledamo histogram razdiobe kriminalnih aktivnosti po satima, primjećuje se veća učestalost  pojavljivanja zločina u poslijepodnevnom razdoblju dana. Također, ukoliko pogledamo prosječni broj zločina po razdoblju dana tijekom jedne godine, vidimo da je se prosječno najveći broj zločina (191.63) događa u poslijepodnevnom razdoblju. 
+
+```{r echo=FALSE}
+cat('Prosječna frekvencija zločina ujutro po danu iznosi', sum(crimesByDay$noOfCrimesMorning)/365, '\n')
+cat('Prosječna frekvencija zločina prijepodne po danu iznosi', sum(crimesByDay$noOfCrimesForenoon)/365, '\n')
+cat('Prosječna frekvencija zločina poslijepodne po danu iznosi', sum(crimesByDay$noOfCrimesAfternoon)/365, '\n')
+cat('Prosječna frekvencija zločina navečer po danu iznosi', sum(crimesByDay$noOfCrimesEvening)/365, '\n')
+```
+
+Dakle, imamo razloga vjerovati da je učestalost zločina poslijepodne veća nego učestalost u ostalim dijelovima dana. Međutim, kako bi se uvjerili u tu pretpostavku, moramo provesti odgovarajuće testove.
+
+Pošto želimo testirati hipotezu da je srednja vrijednost frekvencije zločina po danu u poslijepodnevnom razdoblju veća od srednjih vrijednosti frekvencija zločina u ostalim razdobljima dana, koristimo test o jednakosti srednjih vrijednosti populacije, odnosno t-test. Preduvjet t-testa je normalnost i nezavisnost uzoraka. Kako se svaki zločin zabilježava samo jednom, odnosno nemamo situaciju da bi jedan zločin zabilježili 2 ili više puta, razumno je pretpostaviti nezavisnost zločina koji se događaju u različitim vremenskim razdobljima. Normalnost ćemo provjeriti prvo  grafički, a zatim i odgovarajućim testom.
+
+```{r echo=FALSE}
+
+cat("Prikažimo prvo navedene podatke histogramom")
+
+par(mfrow=c(2,2))
+
+
+hist(crimesByDay$noOfCrimesMorning, 
+     main='Crimes that occured in the morning in a year',
+     breaks=30,
+     xlab='Number of crimes in the morning',
+     axes=FALSE)
+axis(side=1, at=seq(0,400, 50), labels=seq(0,400,50))
+axis(side=2, at=seq(0,80, 10), labels=seq(0,80,10))
+
+hist(crimesByDay$noOfCrimesForenoon, 
+     main='Crimes that occured in the forenoon in a year',
+     breaks = 30,
+     xlab='Number of crimes in the forenoon',
+     axes=FALSE)
+axis(side=1, at=seq(0,400, 50), labels=seq(0,400,50))
+axis(side=2, at=seq(0,80, 10), labels=seq(0,80,10))
+
+hist(crimesByDay$noOfCrimesAfternoon, 
+     main='Crimes that occured in the afternoon in a year',
+     breaks = 30,
+     xlab='Number of crimes in the afternoon',
+     axes=FALSE)
+axis(side=1, at=seq(0,700, 50), labels=seq(0,700,50))
+axis(side=2, at=seq(0,80, 10), labels=seq(0,80,10))
+
+
+hist(crimesByDay$noOfCrimesEvening, 
+     main='Crimes that occured in the evening in a year',
+     breaks = 30,
+     xlab='Number of crimes in the evening',
+     axes=FALSE)
+axis(side=1, at=seq(0,700, 50), labels=seq(0,700,50))
+axis(side=2, at=seq(0,100, 10), labels=seq(0,100,10))
+```
+Vidimo da nam distribucija donekle nalikuje normalnoj, posebice za zločine prijepodne, no bolju sličnost sa normalnom možemo postići preko logaritamske transformacije.
+
+```{r}
+
+par(mfrow=c(2,2))
+
+hist(log(crimesByDay$noOfCrimesMorning), 
+     main='Crimes that occured in the morning in a year',
+     breaks=30,
+     xlab='Number of crimes in the morning log')
+
+hist(log(crimesByDay$noOfCrimesForenoon), 
+     main='Crimes that occured in the forenoon in a year',
+     breaks = 30,
+     xlab='Number of crimes in the forenoon log')
+
+hist(log(crimesByDay$noOfCrimesAfternoon), 
+     main='Crimes that occured in the afternoon in a year',
+     breaks = 30,
+     xlab='Number of crimes in the afternoon log')
+
+hist(log(crimesByDay$noOfCrimesEvening), 
+     main='Crimes that occured in the evening in a year',
+     breaks = 30,
+     xlab='Number of crimes in the evening log')
+
+
+
+```
+Sada već možemo primijetiti kako distribucija frekvencija zločina unutar svakog razdoblja više-manje nalikujue normalnoj. Kako bi se dodatno uvjerili, prikazati ćemo podatke i qq grafom. Testove za ispitivanje normalnosti nećemo koristiti; zbog velikog broja mjerenja, detektirala bi se i najmanja devijacija od normalne distribucije.
+
+```{r}
+par(mfrow=c(2,2))
+
+qqnorm(crimesByDay$noOfCrimesMorning, pch = 1, frame = FALSE,main='Frekvencija zločina ujutro')
+qqline(crimesByDay$noOfCrimesMorning, col = "steelblue", lwd = 2)
+
+qqnorm(crimesByDay$noOfCrimesForenoon, pch = 1, frame = FALSE,main='Frekvencija zločina prijepodne')
+qqline(crimesByDay$noOfCrimesForenoon, col = "steelblue", lwd = 2)
+
+qqnorm(crimesByDay$noOfCrimesAfternoon, pch = 1, frame = FALSE,main='Frekvencija zločina poslijepodne')
+qqline(crimesByDay$noOfCrimesAfternoon, col = "steelblue", lwd = 2)
+
+qqnorm(crimesByDay$noOfCrimesEvening, pch = 1, frame = FALSE,main='Frekvencija zločina navečer')
+qqline(crimesByDay$noOfCrimesEvening, col = "steelblue", lwd = 2)
+```
+Primijećujemo da nam razdiobe poprilično nalikuju normalnoj razdiobi, iznimka je frekvencija zločina ujutro, te u manjoj mjeri frekvencija navečer koji se zbog par outliera donekle odmiču od očekivane vrijednosti za normalnu razdiobu. No, osloniti ćemo se na veliki broj podataka i centralni granični teorem, te nastaviti s testom uz pretpostavku normalnosti.
+
+
+Posljedna stvar koju moramo ustvrditi prije nego li pređemo na testiranje je jednakost varijanci. 
+
+Prije svakog testa, provjeriti ćemo jesu li varijance jednake ili različite, i u skladu s tim koristiti odgovarajući test. 
+U R-u test o jednakosti varijanci implementiran je kroz funkciju var.test(), koja prima uzorke iz populacija čije varijance želimo usporediti.
+
+Prvo testiramo jednakost srednjih vrijednosti frekvencije zločina poslijepodne i zločina ujutro.
+
+Kao što smo rekli, moramo prvo testirati varijance. Pogledajmo prvo varijance (transformiranih) podataka.
+
+
+```{r echo=FALSE}
+cat("Varijanca transformirane frekvencije zločina ujutro", var(crimesByDay$noOfCrimesMorning), "\n")
+cat("Varijacna transformirane frekvencije zločina poslijepodne", var(crimesByDay$noOfCrimesAfternoon), "\n")
+```
+Vidimo da postoji određena razlika među varijancama. Provedimo sad test jednakosti varijanci.
+
+```{r echo=FALSE}
+cat("Test jednakosti varijanci frekvencija zločina ujutro i frekvencija zločina poslijepodne")
+var.test(crimesByDay$noOfCrimesAfternoon, crimesByDay$noOfCrimesMorning)
+```
+Kako je p vrijednost izuzetno mala(<2.2e-16), možemo odbaciti H0 da su naše varijance jednake. Stoga t-test jednakosti varijanci provodimo uz uvjet različitosti varijanci.
+
+```{r}
+t.test(crimesByDay$noOfCrimesAfternoon, crimesByDay$noOfCrimesMorning, alt = "greater", var.equal = FALSE)
+```
+H0 = srednje vrijednosti su jednake
+H1 = srednja vrijednost frekvencija zločina poslijepodne > srednja vrijednost frekvencija zločina ujutro
+
+Kako je p-vrijednost izuzetno mala, odbacujemo H0 u korist H1, te zaključujemo da je prosječna vrijednost frekvencije pojavljivanja zločina poslijepodne veća od prosječne vrijednosti frekvencije pojavljivanja zločina ujutro.
+
+Na potpuno isti način provodimo testove za ostala 2 razdoblja.
+
+Test jednakosti varijanci frekvencija zločina prijepodne i frekvencija zločina poslijepodne.
+
+```{r echo=FALSE}
+cat("Varijanca frekvencije zločina prijepodne", var(crimesByDay$noOfCrimesForenoon), "\n")
+cat("Varijacna frekvencije zločina poslijepodne", var(crimesByDay$noOfCrimesAfternoon), "\n")
+```
+Vidimo da postoji razlika između varijanci, stoga pretpostavljamo da varijance nisu jednake. Provodimo test jednakosti varijanci.
+
+```{r echo=FALSE}  
+cat("Test jednakosti varijanci frekvencija zločina prijepodne i frekvencija zločina poslijepodne")
+var.test(crimesByDay$noOfCrimesAfternoon, crimesByDay$noOfCrimesForenoon)
+```
+P-vrijednost je vrlo mala, te nastavljamo s testom uz uvjet različitosti varijanci.
+
+```{r}
+t.test(crimesByDay$noOfCrimesAfternoon, crimesByDay$noOfCrimesForenoon, alt = "greater", var.equal = FALSE)
+```
+H0 = srednje vrijednosti su jednake
+H1 = srednja vrijednost frekvencija zločina poslijepodne > srednja vrijednost frekvencija zločina prijepodne
+
+P-vrijednost je vrlo mala, odbacujemo H0 u korist H1, te zaključujemo da je srednja vrijednost frekvencije zločina poslijepodne veća od srednje vrijednosti frekvencije zločina prijepodne.
+
+Preostaje nam samo testirati jednakost srednjih vrijednosti frekvencija zločina poslijepodne i frekvencija zločina navečer.
+
+Test jednakosti varijanci frekvencija zločina navečer i frekvencija zločina poslijepodne.
+
+```{r echo=FALSE}
+cat("Varijanca frekvencije zločina navečer", var(crimesByDay$noOfCrimesEvening), "\n")
+cat("Varijacna frekvencije zločina poslijepodne", var(crimesByDay$noOfCrimesAfternoon), "\n")
+```
+Čini nam se da bi varijance mogle biti jednake. Provjeravamo testom jednakosti varijanci.
+
+Test jednakosti varijanci frekvencija zločina navečer i frekvencija zločina poslijepodne.
+```{r}
+var.test(crimesByDay$noOfCrimesAfternoon, crimesByDay$noOfCrimesEvening)
+```
+P-vrijednost je 0.5877, te stoga ne možemo odbaciti hipotezu jednakosti varijanci. Nastavljamo test uz uvjet jednakosti varijanci.
+
+```{r}
+t.test(crimesByDay$noOfCrimesAfternoon, crimesByDay$noOfCrimesEvening, alt = "greater", var.equal = TRUE)
+```
+H0 = srednje vrijednosti su jednake
+H1 = srednja vrijednost frekvencija zločina poslijepodne > srednja vrijednost frekvencija zločina navečer
+
+P-vrijednost je izrazito mala, te stoga možemo odbaciti H0 u korist H1, te zaključiti da je prosječna vrijednost frekvencije zločina poslijepodne veća od prosječne frekvencije zločina navečer.
+
+Nakon provedenih testova, zaključujemo da se u (prosječnom) danu najveći broj zločina dogodi poslijepodne, odnosno u razdoblju od 14-20h.
+
+## Usporedba prisutnosti različitih zločina tijekom dana
+
+Još nas zanima postoji li možda razlika u distribuciji različitih vrsta zločina tijekom dana, odnosno je li u nekom dijelu dana veća vjerojatnost pojave nekog zločina.
+
+Kako bi stekli malo bolju predodžbu o podacima kojima baratamo i potencijalno uočili neku moguću
+povezanost, prikazati ćemo ove dvije varijable linijskim grafom.
+
+
+```{r echo=FALSE}
+#radimo tablicu sa primarnim opisom zločina i vremenskim intervalom
+#unutar kojeg se dogodio slučaj te agregiramo vijednosti prema id-u
+
+library(knitr)
+library(ggplot2)
+
+lastYearCrimes$Zbroj <- 1
+sviZlocini <- aggregate(Zbroj ~ PRIMARY.DESCRIPTION 
+                        + TIME.INTERVAL, data = lastYearCrimes, FUN=sum)
+
+graf <- ggplot(
+  data=sviZlocini, aes(x=TIME.INTERVAL,
+                       y=Zbroj, color= PRIMARY.DESCRIPTION)) + geom_point()
+
+graf + theme_minimal()+ theme(axis.title.x=element_blank()) + 
+  theme(axis.title.y=element_blank()) +
+  theme(legend.title = element_text(size = 10),
+        legend.text = element_text(size = 6),
+        axis.text.y = element_text(size= 8),
+        axis.text.x = element_text(size = 8, angle = 60)) 
+
+
+```
+
+Opažanja i zaključci
+
+- u razdoblju od 10 do 20 sati krađe su zastupljenije od ostalih vrsta zločina
+  te su češće nego u ostalim djelovima dana 
+
+- u razdoblju od 10 do 22 sata provale imaju linearan porast učestalosti
+
+- ostale vrste zločina jednoliko su raspoređene tijekom 
+
+Dakle, iz grafičkih prikaza (histogram i linijski graf) zaključujemo da bi mogla postojati zavisnost između
+vremena u danu i prevalencije određenih vrsta zločina. Kako bi se uvjerili u točnost ove naše tvrdnje, odlično
+nam može poslužiti test nezavisnosti za kategorijske podatke -> zanima nas nosi li poznavanje vrijednosti
+jedne varijable (recimo doba dana, podijeljeno na 4 razdoblja) ikakvu informaciju o vrijednosti druge varijable
+(tip zločina).
+
+
+Za provođenje ovog testa, prvo je potrebno kreirati kontigencijsku tablicu ove dvije varijable, te tablici dodati margine, odnosno sume redaka i stupaca
+
+```{r, results = 'hide'}
+contTable = table( lastYearCrimes$PRIMARY.DESCRIPTION, lastYearCrimes$PERIOD..OF.DAY)
+contTableAddedMargins = addmargins(contTable)
+print(contTableAddedMargins)
+```
+
+Test nezavisnosti $\chi^2$ test u programskom paketu R implementiran je u funkciji `chisq.test()` koja kao ulaz prima kontingencijsku tablicu podataka koje testiramo na nezavisnost. 
+
+Pretpostavka ovog testa je da očekivana frekvencija pojedinog razreda mora biti veća ili jednaka 5 (`chisq.test()` pretpostavlja da je ovaj uvjet zadovoljen stoga je prije provođenja testa potrebno to provjeriti).
+
+```{r echo=FALSE}
+for (col_names in colnames(contTableAddedMargins)){
+  for (row_names in rownames(contTableAddedMargins)){
+    if (!(row_names == 'Sum' | col_names == 'Sum') ){
+      if (((contTableAddedMargins[row_names,'Sum'] * contTableAddedMargins['Sum',col_names]) / contTableAddedMargins['Sum','Sum']) < 5){
+              cat('Očekivane frekvencije za razred manje od 5 ',col_names,'-',row_names,': ',(contTableAddedMargins[row_names,'Sum'] * contTableAddedMargins['Sum',col_names]) / contTableAddedMargins['Sum','Sum'],'\n')
+      }
+    }
+  }
+}
+```
+
+Vidimo da frekvencije određenih razreda ne zadovoljavaju uvjet da im očekivana frekvencija mora biti veća ili jednaka 5. To najvjerojatnije proizlazi iz činjenice da se određene kategrije zločina pojavljuju puno rijeđe od drugih (što je i logično, npr. naravno da je puno više zločina koji pripadaju kategoriji provala nego zločina koji pripadaju kategoriji krijumčarenja ljudima.). Pošto takvih razreda nema puno, te su svi rezultat navedene činjenice rijeđeg pojavljivanja određenih tipova zločina, najjednostavnije rješenje je iz kontigencijske tablice maknuti sve tipove zločina čiji razredi, u kombinaciji sa vremenima u dani, ne zadovoljavaju uvjet frekvencije. To su tipovi zločina GAMBLING, HUMAN TRAFFICKING, NON-CRIMINAL, OTHER NARCOTIC VIOLATION, PUBLIC INDECENCY.
+
+
+Ponavljamo isti postupak kreiranja kontigencijske tablice, samo ne uključujući zločine navedenog tipa.
+
+Svjesni smo da smo mogli koristiti i Fisherov egzaktni test, kojemu ne smeta činjenica da postoje očekivane frekvencije < 5. Međutim, naš dataframe je izuzetno velik, te nam je R javljao grešku "FEXACT error 40.Out of workspace.". Daljnim istraživanjem došli smo do zaključka da je Fisherov test komputacijski zahtjevniji, te da se također većinom koristi u situacijama kada veći broj razreda ima očekivanu frekvenciju < 5, te smo se stoga odlučili za ovu metodu izbacivanja konfliktnih razreda i hi-kvadrat test.
+
+
+```{r}
+
+lastYearCrimesTmp <- subset(lastYearCrimes, !(lastYearCrimes$PRIMARY.DESCRIPTION %in% c("GAMBLING", "HUMAN TRAFFICKING", "NON-CRIMINAL", "OTHER NARCOTIC VIOLATION", "PUBLIC INDECENCY")))
+contTable = table( lastYearCrimesTmp$PRIMARY.DESCRIPTION, lastYearCrimesTmp$PERIOD..OF.DAY)
+contTableAddedMargins = addmargins(contTable)
+```
+Za novu kontigencijsku tablicu ponavljamo provjeru očekivane frekvencije svakog razreda.
+
+```{r}
+noOfInadequateFrequencies = 0
+for (col_names in colnames(contTableAddedMargins)){
+  for (row_names in rownames(contTableAddedMargins)){
+    if (!(row_names == 'Sum' | col_names == 'Sum') ){
+      if (((contTableAddedMargins[row_names,'Sum'] * contTableAddedMargins['Sum',col_names]) / contTableAddedMargins['Sum','Sum']) < 5){
+        noOfInadequateFrequencies = noOfInadequateFrequencies + 1
+      }
+
+    }
+  }
+}
+
+cat("Broj očekivani frekvencija razreda manjih od 5:", noOfInadequateFrequencies)
+```
+Vidimo da je sad očekivana frekvencija svakog razreda > 5 te možemo nastaviti sa testom.
+
+H0 - doba dana i kategorija kriminala su međusobno nezavisne varijable
+H1 - doba dana i kategorija kriminala su međusobno zavisne varijable
+
+```{r}
+chisq.test(contTableAddedMargins,correct=F)
+#čišćenje nepotrebnih tablica iz memorije
+rm(lastYearCrimesTmp)
+rm(contTable)
+rm(contTableAddedMargins)
+```
+Kao što vidimo, dobili smo p vrijednost < 2.2e-16, odnosno možemo odbaciti H0 u korist H1, te zaključiti da zaista postoji zavisnost između doba dana i vrste zločina. Taj rezultat je u skladu s našim pretpostavkama.
+
+
+##  Case study: Usporedba učestalosti krađa i učestalosti kriminala vezanih uz narkotike
+
+Uspoređivati ćemo podatke o krađama te podatke o kriminalima vezanih uz narkotike.
+
+Prvi korak je ispitivanje prisutnosti nepostojećih podataka o vrsti zločina.
+
+```{r}
+anyNA(lastYearCrimes$PRIMARY.DESCRIPTION)
+```
+
+Nepostojećih zapisa nema.
+
+Ima li neunesenih zapisa?
+```{r}
+any(is.null(lastYearCrimes$PRIMARY.DESCRIPTION))
+```
+
+Svi zapisi imaju unesene podatke o primarnom opisu vrste zločina.
+
+Pogledajmo podatke o navedenim vrstama zločina.
+
+
+```{r}
+library(dplyr)
+## dodajemo stupce koji označavaju je li se dogodio zločin krađe odnosno zločin s narkoticima
+lastYearCrimes$krade <- ifelse(grepl("THEFT",  lastYearCrimes$PRIMARY.DESCRIPTION), 1, 0)
+lastYearCrimes$narkotici <- ifelse(grepl("NARCOTICS",  lastYearCrimes$PRIMARY.DESCRIPTION), 1, 0)
+```
+Želimo prikazati distribuciju navedene dvije vrste zločina ovisno o dobu dana
+određenih prema predhodnom zadatku.
+
+
+```{r}
+library(kableExtra)
+
+indKrade = which(lastYearCrimes$krade == 1)
+#lastYearCrimes[indKrade,]
+
+dobaDanaZaKrade <- lastYearCrimes[indKrade,]$TIME.EVERYHOUR
+
+frekvencijePoSatuKrade <- cbind(table(dobaDanaZaKrade))
+colnames(frekvencijePoSatuKrade) <- c("Frekvencija krađa po satu")
+#kbl(frekvencijePoSatuKrade, booktabs = T)
+```
+
+
+```{r}
+indNarkotici = which(lastYearCrimes$narkotici == 1)
+#lastYearCrimes[indNarkotici,]
+
+dobaDanaZaNarkotike <- lastYearCrimes[indNarkotici,]$TIME.EVERYHOUR
+
+frekvencijePoSatuNarkotici <- cbind(table(dobaDanaZaNarkotike))
+colnames(frekvencijePoSatuNarkotici) <- c("Frekvencija narkotika po satu")
+#kbl(frekvencijePoSatuNarkotici, booktabs = T)
+```
+
+```{r}
+# Osnovna deskriptivna statistika:
+summary(frekvencijePoSatuKrade)
+```
+Iz sažetka mogu se isčitati osnovni podatci;  najmanje zločina vezanih uz kađe
+dogodi se u razdoblju od 5 do 6 sati ujutro, dok se najviše dogodi u razdoblju
+od 12 do 13. Prosječan broj po satu jest 2300 zločina.
+
+```{r}
+# Osnovna deskriptivna statistika:
+summary(frekvencijePoSatuNarkotici)
+```
+
+Iz sažetka mogu se isčitati osnovni podatci; najmanje zločina vezanih uz narkotike
+također se dogodi u razdoblju od 5 do 6 sati ujutro, dok se najviše dogodi u razdoblju
+od 11 do 12. Prosječan broj po satu jest 344.1 zločin.
+
+Ako je frekvencija krađa daleko veća od učestalosti zločina vezanih uz narkotike,
+na prvi pogled vidi se da oba dvije raspodijele imaju minimume tijekom razdoblja
+između 3 i 7 sati ujutro. 
+Prikažimo to grafički.
+
+
+Grafički prikazujemo frekvencije krađa ovisno o dobu dana.
+
+```{r}
+lastYearCrimes$kradeTrue <- as.integer(as.logical(lastYearCrimes$krade))
+
+lastYearCrimes$KradeBr <- 1
+sveKrade <- aggregate(kradeTrue ~ krade
+                        + TIME.INTERVAL, data = lastYearCrimes, FUN=sum)
+ind = which(sveKrade$krade == TRUE)
+
+graf <- ggplot(
+  data=sveKrade[ind,], aes(x=TIME.INTERVAL,
+                       y=kradeTrue, color= krade),show.legend = FALSE) + geom_point()
+
+graf + theme_minimal()+ theme(axis.title.x=element_blank()) + 
+  theme(axis.title.y=element_blank()) +
+  theme(legend.position = "none",
+        axis.text.y = element_text(size= 8))
+
+```
+
+Broj prisutnih zločina vezanih uz krađe najprisutniji je između podneva i 18 sati.
+nakon čega broj pada sve do 4 sata ujutro gdje ima najmanju vrijednost.
+Krivulja je naizgled pravilna.
+
+Isti postupak provodimo za narkotike
+
+
+```{r}
+lastYearCrimes$narkoticiTrue <- as.integer(as.logical(lastYearCrimes$narkotici))
+
+lastYearCrimes$NarkoticiBr <- 1
+sviNarkotici <- aggregate(narkoticiTrue ~ narkotici
+                        + TIME.INTERVAL, data = lastYearCrimes, FUN=sum)
+## treba maknuti false vrijednosti iz tablice
+ind = which(sviNarkotici$narkotici == TRUE)
+
+graf <- ggplot(
+  data=sviNarkotici[ind,], aes(x=TIME.INTERVAL,
+                       y=narkoticiTrue, color= narkotici),show.legend = FALSE) + geom_point()
+
+graf + theme_minimal()+ theme(axis.title.x=element_blank()) + 
+  theme(axis.title.y=element_blank()) +
+  theme(legend.position = "none",
+        axis.text.y = element_text(size= 8))
+
+
+
+```
+
+Možemo primjetiti najveći broj zločina povezanih sa narkoticima u razdoblju od
+10 do 12 sati nakon čega broj linearno pada sve do 18 sati. Daleko najmanji broj 
+prisutaj je u razdoblju od 4 do 6 sati ujutro.
+Iz grafa ništa nemožemo zaključiti o prisutnosti zločina kroz doba dana.
+
+
+Zanima nas odnos frekvencija kriminala vezanih uz narkotike u odnosu na kriminale vezane uz krađu. Najjednostavniji i najpraktičniji način da dobijemo uvid u odnos tih frekvencija je da izračunamo
+prosječan broj zločina u jednom danu za jednu kategoriju zločina, te za drugu, te provedemo t-test za jednakost srednjih vrijednosti.
+
+```{r echo=FALSE}
+cat("Prosječan dnevni broj zločina vezanih uz narkotike", (length(which(lastYearCrimes$PRIMARY.DESCRIPTION == "NARCOTICS"))/365), "\n")
+cat("Prosječan dnevni broj zločina vezanih uz krađe", (length(which(lastYearCrimes$PRIMARY.DESCRIPTION == "THEFT"))/365), "\n")
+```
+Kao što vidimo, u Chicagu se dnevno, u prosjeku, događa gotovo 5.5 puta zločina vezanih uz krađu više nego zločina vezanih uz narkotike. Ovo nam daje snažnu indikaciju da je frekvencija krađa veća od frekvencije narkotika, no to moramo potvrditi odgovarajućim testom.
+
+Dodajemo 2 nova stupa u dataframe crimesByDay - stupac noOfNarcoticsCrimes, te stupac noOfTheftCrimes
+Čni nam za svaki dan (tj. redak) u dataframeu govore koliko je taj dan bilo zločina povezanih sa narkoticima, odnosno krađama
+
+```{r}
+#crimesByDay
+
+for (i in 1:length(crimesByDay$DATE)){
+  datum <- crimesByDay$DATE[i]
+  crimesByDay$noOfNarcoticsCrimes[i] <- sum((lastYearCrimes$PRIMARY.DESCRIPTION == "NARCOTICS") & (lastYearCrimes$DATE..OF.OCCURRENCE == datum))
+  crimesByDay$noOfTheftCrimes[i] <- sum((lastYearCrimes$PRIMARY.DESCRIPTION == "THEFT") & (lastYearCrimes$DATE..OF.OCCURRENCE == datum))
+}
+
+head(crimesByDay)
+```
+Ono što želimo testirati je je li prosječni broj zločina vezanih uz krađe po danu veći od prosječnog broja zločina vezanih uz narkotike. Za tu svrhu služi nam t-test, detaljno opisan u 1. zadatku.
+
+Kako smo već jednom imali posla s t-testom, znamo da bi ga uspješno proveli, moramo zadovoljiti neke preduvjete. Specifično, podaci koje testiramo moraju, barem ugrubo imati normalnu distribuciju, te biti međusobno nezavisni. Kako je svaki zločin označen samo jednim opisnikom, ne postoji mogućnost da je npr. isti zločin zabilježen i kao krađa i kao zločin vezan uz narkotike, stoga je razumno pretpostaviti nezavisnost. Da bi utvrdili zadovoljavaju li uzorci i uvjet normalnosti, moramo ih malo bolje pročiti.
+
+```{r}
+par(mfrow=c(2,2))
+
+hist(crimesByDay$noOfTheftCrimes, 
+     main='Number of theft-related crimes in a year',
+     breaks=15,
+     xlab='Number of theft-related crimes')
+
+hist(crimesByDay$noOfNarcoticsCrimes, 
+     main='Number of narcotics crimes in a year',
+     breaks=15,
+     xlab='Number of narcotics-related crimes')
+
+qqnorm(crimesByDay$noOfTheftCrimes, pch = 1, frame = FALSE,main='Theft frequency')
+qqline(crimesByDay$noOfTheftCrimes, col = "steelblue", lwd = 2)
+
+qqnorm(crimesByDay$noOfNarcoticsCrimes, pch = 1, frame = FALSE,main='Narcotics crimes frequencies')
+qqline(crimesByDay$noOfNarcoticsCrimes, col = "steelblue", lwd = 2)
+```
+
+
+Iz histograma primjećujemo da se razdioba frekvencije krađa više-manje ravna po normalnoj distribuciji, međutim čini se da razdioba frekvencije kriminala vezanih uz narkotike dosta odstupa od normalne distribucije. 
+
+Iz qq dijagrama potvrđujemo navedenu tvrdnju - krađe poprilično dobro slijede normalnu distribuciju, dok zločini vezani uz narkotike ne. Znamo da je jedan od načina na koji možemo podatke svesti na normalnu razdiobu logaritamska transformacija, stoga idemo pogledati kako izgledaju transformirani podaci.
+
+```{r}
+par(mfrow=c(2,2))
+
+hist(log10(crimesByDay$noOfTheftCrimes), 
+     main='(Log) Number of theft-related in a year',
+     breaks=15,
+     xlab='Number of theft-related crimes')
+
+hist(log10(crimesByDay$noOfNarcoticsCrimes), 
+     main='(Log) Number of narcotics crimes in a year',
+     breaks=15,
+     xlab='Number of narcotics-related crimes')
+
+qqnorm(log10(crimesByDay$noOfTheftCrimes), pch = 1, frame = FALSE,main='(Log) Theft frequency')
+qqline(log10(crimesByDay$noOfTheftCrimes), col = "steelblue", lwd = 2)
+
+qqnorm(log10(crimesByDay$noOfNarcoticsCrimes), pch = 1, frame = FALSE,main='(Log) Narcotics crimes frequency')
+qqline(log10(crimesByDay$noOfNarcoticsCrimes), col = "steelblue", lwd = 2)
+```
+Vidimo da transformirani podaci ipak nešto bolje nalikuju normalnoj razdiobu, pa, oslanjajući se na velik broj podataka i centralni granični teorem, nastavljamo s testiranjem koristeći transformirane podatke.
+
+```{r echo=FALSE}
+cat("Varijanca frekvencije krađa", var(log10(crimesByDay$noOfTheftCrimes)), "\n")
+cat("Varijacna frekvencije narkotika", var(log10(crimesByDay$noOfNarcoticsCrimes)), "\n")
+```
+Vidimo da postoji razlika između varijanci, stoga pretpostavljamo da varijance nisu jednake. Provodimo test jednakosti varijanci.
+
+```{r echo=FALSE}  
+cat("Test jednakosti varijanci frekvencija krađi i narkotika")
+var.test(crimesByDay$noOfTheftCrimes, crimesByDay$noOfNarcoticsCrimes)
+```
+Dobili smo malu p vrijednost, te zaključujemo da varijance nisu jednake. Možemo nastaviti sa testom
+```{r}
+t.test(log10(crimesByDay$noOfTheftCrimes), log10(crimesByDay$noOfNarcoticsCrimes), alternative = "greater", var.equal = FALSE)
+```
+
+Dobili smo malu p-vrijednost, te zaključujuemo da je (transformirana) srednja vrijednost frekvencije krađa veća od (transformirane) srednje vrijednosti narkotika. Zbog svojstava logaritamske transformacije, to znači da ista relacija vrijedi i za srednje vrijednosti originalnih podataka.
+
+##  Case study: Veza između socio-ekonomskih faktora i pojedine kategorije kriminala
+
+Do sada smo razmatrali utjecaj vanjskih čimbenika na kriminalna dijela, no zanima nas i potencijalna korelacija između socioekonomskog statusa pojedinaca i pojedine kategorije kriminala.
+Socioekonomski status stanovnika pojedinih općina Chicaga praćen je pomoću prosjećne razine neimaštine, pretrpanog kućanstva, nezavršene srednje škole,dohotka po stanovniku te nezaposlenosti. 
+
+
+```{r}
+poverty_crime=read.csv("data/Chicago_poverty_and_crime.csv")
+summary(poverty_crime)
+```
+
+Assault..Homicide prikazuje broj napada i ubojstva na 100.000 stanovnika.
+
+Firearm.related prikazuje broj kriminala povezanih sa vatrenim oružjem na 100.000 stanovnika.
+
+Below.Poverty.Level označava postotak stanovništva u kvartu koja živi ispod granice siromaštva. Granica siromaštva se definira kao količina novaca potrebna za osnovne potrebštine.
+
+Crowded.Housing je postotak stanovništva koje živi u prenapučenom domu. Dom je prenapučen ako u njemu živi više ljudi nego namijenjeno.
+
+Dependency označava postotak stanovništva koji financijski potpuno ili značajno ovisi o drugoj osobi.
+No.High.School.Diploma je postotak stanovništva bez srednje stručne spreme.
+
+Per.Capita.Income je prosječan dohodak po osobi u pojedinom kvartu.
+
+Unemployment označava postotak nezaposlenog stanovništva u kvartu.
+
+### Jednostavna linearna regresija
+
+Radimo jednostavne regresijske modele o utjecaju pojedinih faktora na frekvenciju napada i ubojstva. Ne prikazujemo ih sve, ali neke ćemo istaknuti.
+
+```{r jednostavna regresija}
+#nekoliko jednostavnih regresijskih modela
+fit.poverty=lm(Assault..Homicide.~Below.Poverty.Level, data=poverty_crime)
+fit.income=lm(Assault..Homicide.~Per.Capita.Income, data=poverty_crime)
+fit.crowded=lm(Assault..Homicide.~Crowded.Housing, data=poverty_crime)
+fit.dependency=lm(Assault..Homicide.~Dependency, data=poverty_crime)
+fit.noHSdiploma=lm(Assault..Homicide.~No.High.School.Diploma, data=poverty_crime)
+fit.unemployment=lm(Assault..Homicide.~Unemployment, data=poverty_crime)
+```
+
+
+```{r poverty}
+#postotak siromaštva vs frekvencija ubojstva
+plot(poverty_crime$Below.Poverty.Level, poverty_crime$Assault..Homicide., main = "Prikaz frekvencije ubojstva i siromaštva")
+lines(poverty_crime$Below.Poverty.Level, fit.poverty$fitted.values, col="red")
+```
+
+Kako bi mogli uspoređivati ovaj model sa drugima, moramo prvo provjeriti jesu li pretpostavke modela narušene. Normalnost reziduala ćemo provjeriti grafički pomoću histograma.
+
+```{r}
+hist(rstandard(fit.poverty))
+```
+
+Reziduali ne pokazuju preveliko odstupanje od normalne distribucije, a znamo da je t-test robustan na normalnost pa i dalje možemo radili statističku analizu na temelju modela.
+
+```{r}
+plot (poverty_crime$Below.Poverty.Level, rstandard(fit.poverty), ylab="Standardized Residuals", xlab="Below poverty level")
+abline(0, 0) 
+```
+Na ovom grafu vidimo da pretpostavka o homogenosti varijance nije točna, što je tipično za studije presjeka.
+Kod ovakvih istraživanja, treba uzeti u obzir da se greške modela mogu povećavati u ovisnosti o nekim varijablama, ali iz grafa nije očito koja bi varijabla to mogla biti.
+
+Za daljnu analizu modela koristimo funkciju summary()
+```{r}
+summary(fit.poverty)
+
+
+```
+Varijabla postotka siromaštva je statistički značajna te model dobro predviđa kriminal. Sama konstanta statistički nije značajna, ali nam to ne smeta jer ćemo kasnije raditi višestruku linearnu regresiju i tada će (nadamo se) konstanta biti točnija.
+
+
+Sljedeće gledamo linearni model ovisnosti ubojstva o prosječnom dohotku
+
+```{r}
+#prosječni dohodak vs kriminal
+plot(poverty_crime$Per.Capita.Income, poverty_crime$Assault..Homicide.)
+lines(poverty_crime$Per.Capita.Income, fit.income$fitted.values, col="red")
+
+```
+
+Provjeravamo normalnost reziduala.
+
+```{r}
+hist(rstandard(fit.income))
+```
+
+Za provjeravanje normalnosti reziduala možemo koristiti i Q-Q plot.
+```{r}
+qqnorm(rstandard(fit.income))
+qqline(rstandard(fit.income))
+```
+
+Možemo dodatno statistički provjeriti i sa Lilliefors testom.
+H0 = standarnizirani reziduali slijede normalnu distribuciju.
+
+H1 = standarnizirani reziduali ne slijede normalnu distribuciju.
+```{r}
+library(nortest)
+lillie.test(rstandard(fit.income))
+```
+Po testu odbacujemo nultu hipotezu ali i dalje nastavljamo sa analizom jer distribucija reziduala mora barem donekle ličiti na normalnu distribuciju.
+
+Potrebno je i provjeriti homoskedastičnost.
+```{r}
+plot (poverty_crime$Per.Capita.Income, rstandard(fit.income), ylab="Standardized Residuals", xlab="Per capita income")
+abline(0, 0) 
+
+```
+Zbog vrste istraživanja uzorci nisu jednoliko raspoređeni po promatranoj varijabli, te ne možemo ispitati homoskedastičnost. Ima samo 72 uzorka. 
+
+Primijetimo da kvartova sa prosječnim dohotkom iznad 60,000 ima malo i zbog toga ne možemo odrediti varijancu reziduala. Takvi kvartovi su rubni slučajevi. Zbog istog razloga ne ispitujemo homoskedastičnost nad ostalim modelima.
+
+
+```{r}
+summary(fit.income)
+
+```
+Koeficijent uz dohodak je vrlo mali, ali to je očekivano jer dohodak se izražava relativno velikim brojevima u odnosu na broj kriminala.
+
+Također, p-vrijednost je vrlo mala pa je model statistički značajan.
+
+
+Dalje proučavamo ovisnost kriminala o prenapućenosti kućanstva
+
+```{r}
+#prenapućenost vs kriminal
+plot(poverty_crime$Crowded.Housing, poverty_crime$Assault..Homicide.)
+lines(poverty_crime$Crowded.Housing, fit.crowded$fitted.values, col="red")
+```
+Nagib je blago rastuć, a pojedini uzorci su dosta udaljeni od pravca regresije.
+
+```{r}
+hist(rstandard(fit.crowded))
+```
+Graf se dosta razlikuje od normalne razdiobe, pokazuje kršenje pretpostavke o normalnosti reziduala.
+
+```{r}
+qqnorm(rstandard(fit.crowded))
+qqline(rstandard(fit.crowded))
+```
+QQ graf također pokazuje narušavanje pretpostavke o normalnosti. Navodimo ga za usporedbu s drugim QQ grafom.
+
+Prikazan oblik nam govori da su podaci preraspršeni za normalnu razdiobu.
+
+Iako varijabla nije pogodna za jednostavnu linearnu regresiju, može biti značajna kod višestruke regresije u kombinaciji s drugim varijablama, pa ćemo je probati iskorititi kasnije.
+
+Sljedeće prikazujemo ovisnost kriminala o nezaposlenosti
+```{r}
+summary(fit.unemployment)
+```
+Koeficijent determinante je 0.664, što je vrlo uspješno za statistiku koja se bavi ljudima.
+
+Izdvojili smo ju jer nezaposlenost vrlo direktno utječe na prosječan dohodak stanovništva u kvartu.
+```{r}
+cor(poverty_crime$Unemployment, poverty_crime$Per.Capita.Income)
+```
+Njihova korelacije je relativno velika.
+No kada prikažemo ovisnost kriminala o prosječnom dohotku, dobijemo model s iznenađujuće malim koeficijentom determinacije
+
+```{r}
+summary(fit.income)
+```
+Zbog ovoga nismo mogli napraviti dobre višestruke modele koje sadrže prosječni dohodak.
+Zbog velike korelacije s drugim varijablama gubili smo statističku značajnost varijabli, a koeficijent determinacije ne bi postao dovoljno veći da to opravda.
+
+```{r}
+qqnorm(rstandard(fit.income))
+qqline(rstandard(fit.income))
+```
+QQ graf ne pokazuje velika odstupanja od normalnosti,
+
+
+Nećemo prikazivati ostale jednostavne linearne regresije, jer ćemo neke od njih koristiti u višestrukoj linearnoj regresiji.
+
+##Višestruke linearne regresije
+
+Prvo moramo testirati na korelaciju između faktora.
+
+[1] - Siromaštvo
+
+[2] - Prenapučenost kućanstva
+
+[3] - Financijska ovisnost
+
+[4] - Postotak ljudi bez SSS
+
+[5] - Prosječni dohodak
+
+[6] - Nezaposlenost
+```{r}
+cor(cbind(poverty_crime$Below.Poverty.Level, poverty_crime$Crowded.Housing,poverty_crime$Dependency, poverty_crime$No.High.School.Diploma, poverty_crime$Per.Capita.Income, poverty_crime$Unemployment)) 
+
+```
+
+U slučaju visoke koreliranosti ulaznih varijabli procjena regresijskog modela će biti nestabilna.
+Koristimo gornju tablicu kako bih lakše odabrali varijable za dobar model.
+
+Radimo model s regresorima financijske neovisnosti i postotkom siromaštva.
+
+```{r}
+fit.multi = lm(Assault..Homicide. ~ Below.Poverty.Level+Dependency, poverty_crime)
+summary(fit.multi)
+```
+P-vrijednosti t-testova pojedinih varijabli nam pokazuju da su sve varijable statistički značajne.
+
+Ako varijable među sobom imaju veliku korelaciju, to može narušiti statističku značajnost koje bi one pojedinačno imale.
+```{r}
+cor(poverty_crime$Below.Poverty.Level, poverty_crime$Dependency)
+```
+Razlika koeficijent determinacije i prilagođenog koeficijenta determinacije nije velika.
+Zaključujemo da su obje varijable pridonijele modelu te zato nisu loš izbor unatoč njihovoj korelaciji od 0.401354.
+
+Dobiveni model višestruke regresije uspješno opisuje 55.75% varijacije u podacima.
+
+Kako bi prihvatili model potrebno je provjeriti normalnost reziduala.
+```{r}
+hist(rstandard(fit.multi))
+```
+Grafički prikaz pokazuje da normalnost reziduala je očuvana, uzimajući u obzir robustnost te pretpostavke.
+
+Dodajemo prosječni dohodak u model.
+```{r}
+fit.multi2 = lm(Assault..Homicide. ~ Below.Poverty.Level+Dependency+Per.Capita.Income, poverty_crime)
+hist(rstandard(fit.multi2))
+```
+Graf razdiobe reziduala je dovoljno sličan normalnom.
+
+```{r}
+summary(fit.multi2)
+```
+Model se nije puno poboljšao dodavanjem varijable dohotka. Sam dohodak je statistički neznačajan, te radi jednostavnosti, bolje je odbaciti ga.
+
+Nadograđujemo prethodni model sa regresorom prenapučenosti kućanstva
+```{r}
+fit.multi3 = lm(Assault..Homicide. ~ Below.Poverty.Level + Dependency + Crowded.Housing, poverty_crime)
+hist(rstandard(fit.multi3))
+```
+Graf razdiobe reziduala je dovoljno sličan normalnoj.
+```{r}
+summary(fit.multi3)
+```
+Koeficijent determinacije je bolji do prethodnog za 0.04. Sve prethodne varijable su ostale vrlo značajne, a varijabla napučenosti kućanstva je isto statistički značajna, ali manje u odnosu na ostale varijable.
+
+
+Ulazne varijable ovog modela su financijska ovisnost, postotak ljudi bez SSS i postotak ljudi ispod linije siromaštva.
+Prilikom odabira modela pazili smo na korelacije varijabli, jer visoke korelacije mogu uzrokovati probleme u interpretaciji regresijskih rezultata.
+
+### Prikaz korelacije varijabli
+```{r echo=FALSE}
+cor(cbind(poverty_crime$Below.Poverty.Level, poverty_crime$Dependency, poverty_crime$No.High.School.Diploma))
+```
+Kvadriranje postotka ljudi ispod linije siromaštva je inspirirano začaranim krugovima koje siromaštvo stvara.
+Siromaštvo samo sebe pogoni pomoću kredita sa većim kamatama i lošijim financijskim odlukama koje su siromašni ljudi primorani napraviti.
+
+
+Sljedeći model prima ulaze: Below.Poverty.Level, (Below.Poverty.Level)^2, Dependency, No.High.School.Diploma
+
+```{r}
+fit.multi4 = lm(Assault..Homicide. ~ Below.Poverty.Level + I(Below.Poverty.Level^2) + Dependency + No.High.School.Diploma, poverty_crime)
+summary(fit.multi4)
+```
+Sve ulazne varijable su statistički značajne. Koeficijent korelacije je 0.6867.
+```{r}
+hist(rstandard(fit.multi4))
+```
+Pretpostavka o linearnosti reziduala je prihvatljiva.
+
+
+### Zaključak
+Konačan model sadržava relevantne varijable koje objašnjavaju čak preko 68.67% varijance broja napada i ubojstva. Osim varijabli Dependency, Below.Poverty.Level i No.High.School.Diploma, uključen je i kvadrat Below.Poverty.Level-a (zbog nelinearnog efekta).
+
+
+Sve navedene varijable su značajne na razini 0.01, kao i sam model, na što upućuju rezultati t-testova pojedinih koeficijenata i F-testa čitavog modela.
+Za usporedbu, jednostavni linearni regresijski model s regresorskom varijablom Per.Capita.Income ima koeficijent korelacije R=0.664
+Treba procijeniti je li vrijedna zamjena jednostavnosti za tako sitno poboljšanje modela
+
